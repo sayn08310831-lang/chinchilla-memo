@@ -1,0 +1,606 @@
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { initializeApp } from 'firebase/app';
+import { getFirestore, collection, doc, onSnapshot, addDoc, setDoc, deleteDoc, query, where, writeBatch, getDocs } from 'firebase/firestore';
+import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { Plus, Edit, Trash2, Tag, Inbox, Star, Bell, X, ChevronDown, ChevronRight, AlertCircle, Calendar as CalendarIcon, Clock, ChevronLeft, Sparkles } from 'lucide-react';
+
+// --- Firebase Configuration ---
+// These global variables are provided by the environment.
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-memo-app';
+const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+
+// --- Firebase Initialization ---
+let app;
+let db;
+let auth;
+
+try {
+    app = initializeApp(firebaseConfig);
+    db = getFirestore(app);
+    auth = getAuth(app);
+} catch (e) {
+    console.error("Firebase initialization error:", e);
+}
+
+// --- Sound Notification Helper ---
+const playNotificationSound = () => {
+    // Check for browser compatibility
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) {
+        console.warn("Web Audio API is not supported in this browser.");
+        return;
+    }
+    const audioContext = new AudioContext();
+
+    // Create sound nodes
+    const oscillator = audioContext.createOscillator();
+    const gainNode = audioContext.createGain();
+
+    // Connect nodes
+    oscillator.connect(gainNode);
+    gainNode.connect(audioContext.destination);
+
+    // Configure sound properties
+    oscillator.type = 'sine'; // A clean, simple tone
+    oscillator.frequency.setValueAtTime(880, audioContext.currentTime); // A5 note, noticeable but not too harsh
+
+    // Control volume for a smooth sound without clicking
+    gainNode.gain.setValueAtTime(0, audioContext.currentTime);
+    gainNode.gain.linearRampToValueAtTime(0.5, audioContext.currentTime + 0.05); // Quick fade in
+    gainNode.gain.exponentialRampToValueAtTime(0.00001, audioContext.currentTime + 0.5); // Fade out over 0.5s
+
+    // Play and stop the sound
+    oscillator.start(audioContext.currentTime);
+    oscillator.stop(audioContext.currentTime + 0.5);
+};
+
+
+// --- Gemini API Helper ---
+const callGeminiApi = async (prompt, retries = 3, delay = 1000) => {
+    const apiKey = ""; // This will be handled by the environment.
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+
+    const payload = {
+        contents: [{
+            role: "user",
+            parts: [{ text: prompt }]
+        }]
+    };
+
+    for (let i = 0; i < retries; i++) {
+        try {
+            const response = await fetch(apiUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) {
+                const errorBody = await response.text();
+                console.error(`API request failed with status ${response.status}: ${errorBody}`);
+                throw new Error(`API request failed with status ${response.status}`);
+            }
+
+            const result = await response.json();
+            
+            if (result.candidates && result.candidates.length > 0 &&
+                result.candidates[0].content && result.candidates[0].content.parts &&
+                result.candidates[0].content.parts.length > 0) {
+                return result.candidates[0].content.parts[0].text;
+            } else {
+                console.error("Unexpected API response structure:", result);
+                throw new Error("Invalid response structure from Gemini API.");
+            }
+        } catch (error) {
+            console.error(`Attempt ${i + 1} to call Gemini API failed:`, error);
+            if (i < retries - 1) {
+                await new Promise(res => setTimeout(res, delay * Math.pow(2, i)));
+            } else {
+                throw error; // Rethrow the last error after all retries fail
+            }
+        }
+    }
+};
+
+
+// --- Main App Component ---
+export default function App() {
+    // --- State Management ---
+    const [userId, setUserId] = useState(null);
+    const [isAuthReady, setIsAuthReady] = useState(false);
+    const [memos, setMemos] = useState([]);
+    const [categories, setCategories] = useState([]);
+    const [activeFilter, setActiveFilter] = useState({ type: 'all', id: null });
+    const [isModalOpen, setIsModalOpen] = useState(false);
+    const [editingMemo, setEditingMemo] = useState(null);
+    const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
+    const [editingCategory, setEditingCategory] = useState(null);
+    const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+    const [reminders, setReminders] = useState([]);
+
+    // --- Authentication ---
+    useEffect(() => {
+        if (!auth) return;
+        const unsubscribe = onAuthStateChanged(auth, async (user) => {
+            if (user) {
+                setUserId(user.uid);
+            } else {
+                try {
+                    await signInAnonymously(auth);
+                } catch (error) {
+                    console.error("Anonymous sign-in failed:", error);
+                }
+            }
+            setIsAuthReady(true);
+        });
+        return () => unsubscribe();
+    }, []);
+
+    // --- Data Fetching (Memos & Categories) ---
+    useEffect(() => {
+        if (!isAuthReady || !userId || !db) return;
+
+        // Fetch Categories
+        const categoriesCollection = collection(db, `artifacts/${appId}/users/${userId}/categories`);
+        const unsubscribeCategories = onSnapshot(categoriesCollection, (snapshot) => {
+            const fetchedCategories = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            setCategories(fetchedCategories);
+        }, (error) => console.error("Error fetching categories:", error));
+
+        // Fetch Memos
+        const memosCollection = collection(db, `artifacts/${appId}/users/${userId}/memos`);
+        const unsubscribeMemos = onSnapshot(memosCollection, (snapshot) => {
+            const fetchedMemos = snapshot.docs.map(doc => ({
+                id: doc.id,
+                ...doc.data(),
+                createdAt: doc.data().createdAt?.toDate(),
+                updatedAt: doc.data().updatedAt?.toDate(),
+                reminderAt: doc.data().reminderAt?.toDate(),
+            }));
+            setMemos(fetchedMemos);
+        }, (error) => console.error("Error fetching memos:", error));
+
+        return () => {
+            unsubscribeCategories();
+            unsubscribeMemos();
+        };
+    }, [isAuthReady, userId]);
+    
+    // --- Reminder Check ---
+    useEffect(() => {
+        const checkReminders = () => {
+            const now = new Date();
+            const triggered = memos.filter(memo => 
+                memo.reminderAt && 
+                memo.reminderAt <= now &&
+                !memo.reminderTriggered
+            );
+
+            if (triggered.length > 0) {
+                playNotificationSound(); // Play sound on reminder
+                setReminders(prev => {
+                    const newReminders = triggered.filter(t => !prev.some(p => p.id === t.id));
+                    return [...prev, ...newReminders];
+                });
+                triggered.forEach(memo => {
+                    const memoRef = doc(db, `artifacts/${appId}/users/${userId}/memos`, memo.id);
+                    setDoc(memoRef, { reminderTriggered: true }, { merge: true });
+                });
+            }
+        };
+
+        const intervalId = setInterval(checkReminders, 10000); // Check every 10 seconds
+        return () => clearInterval(intervalId);
+    }, [memos, userId]);
+
+
+    // --- Memo Filtering ---
+    const filteredMemos = useMemo(() => {
+        let sorted = [...memos].sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
+        switch (activeFilter.type) {
+            case 'all':
+                return sorted;
+            case 'important':
+                return sorted.filter(memo => memo.priority === 'high');
+            case 'reminders':
+                return sorted.filter(memo => memo.reminderAt);
+            case 'category':
+                return sorted.filter(memo => memo.categoryId === activeFilter.id);
+            default:
+                return sorted;
+        }
+    }, [memos, activeFilter]);
+
+    // --- Event Handlers ---
+    const handleSaveMemo = async (memoData) => {
+        if (!userId || !db) return;
+        const memosCollection = collection(db, `artifacts/${appId}/users/${userId}/memos`);
+        const now = new Date();
+        const dataToSave = {
+            ...memoData,
+            updatedAt: now,
+            reminderAt: memoData.reminderAt ? new Date(memoData.reminderAt) : null,
+        };
+        
+        if (memoData.reminderAt) {
+            dataToSave.reminderTriggered = false;
+        }
+
+        if (editingMemo) {
+            const memoRef = doc(db, `artifacts/${appId}/users/${userId}/memos`, editingMemo.id);
+            await setDoc(memoRef, dataToSave, { merge: true });
+        } else {
+            await addDoc(memosCollection, {
+                ...dataToSave,
+                createdAt: now,
+            });
+        }
+        closeModal();
+    };
+    
+    const handleDeleteMemo = async (memoId) => {
+        if (!userId || !db || !window.confirm('このメモを本当に削除しますか？')) return;
+        const memoRef = doc(db, `artifacts/${appId}/users/${userId}/memos`, memoId);
+        await deleteDoc(memoRef);
+    };
+
+    const handleSaveCategory = async (categoryData) => {
+        if (!userId || !db) return;
+        const categoriesCollection = collection(db, `artifacts/${appId}/users/${userId}/categories`);
+        if (editingCategory) {
+            const categoryRef = doc(db, `artifacts/${appId}/users/${userId}/categories`, editingCategory.id);
+            await setDoc(categoryRef, categoryData, { merge: true });
+        } else {
+            await addDoc(categoriesCollection, categoryData);
+        }
+        closeCategoryModal();
+    };
+
+    const handleDeleteCategory = async (categoryId) => {
+        if (!userId || !db || !window.confirm('このカテゴリを削除しますか？カテゴリ内のメモは「未分類」になります。')) return;
+        const batch = writeBatch(db);
+        const categoryRef = doc(db, `artifacts/${appId}/users/${userId}/categories`, categoryId);
+        batch.delete(categoryRef);
+        const memosToUpdateQuery = query(collection(db, `artifacts/${appId}/users/${userId}/memos`), where("categoryId", "==", categoryId));
+        const memosSnapshot = await getDocs(memosToUpdateQuery);
+        memosSnapshot.forEach((memoDoc) => {
+            const memoRef = doc(db, `artifacts/${appId}/users/${userId}/memos`, memoDoc.id);
+            batch.update(memoRef, { categoryId: null });
+        });
+        await batch.commit();
+        setActiveFilter({ type: 'all', id: null });
+    };
+
+    const openModal = (memo = null) => {
+        setEditingMemo(memo);
+        setIsModalOpen(true);
+    };
+    const closeModal = () => setIsModalOpen(false);
+
+    const openCategoryModal = (category = null) => {
+        setEditingCategory(category);
+        setIsCategoryModalOpen(true);
+    };
+    const closeCategoryModal = () => setIsCategoryModalOpen(false);
+    
+    const dismissReminder = (reminderId) => {
+        setReminders(reminders.filter(r => r.id !== reminderId));
+    };
+
+    if (!isAuthReady) {
+        return <div className="flex items-center justify-center h-screen bg-gray-100 dark:bg-gray-900"><div className="text-lg">読み込み中...</div></div>;
+    }
+
+    // --- Render ---
+    return (
+        <div className="flex h-screen bg-gray-100 dark:bg-gray-900 text-gray-800 dark:text-gray-200 font-sans">
+            <div className="absolute top-4 right-4 z-50 space-y-2">
+                {reminders.map(reminder => (
+                    <ReminderToast key={reminder.id} reminder={reminder} onDismiss={dismissReminder} />
+                ))}
+            </div>
+
+            <Sidebar
+                isOpen={isSidebarOpen}
+                categories={categories}
+                activeFilter={activeFilter}
+                onFilterChange={setActiveFilter}
+                onNewCategory={() => openCategoryModal()}
+                onEditCategory={openCategoryModal}
+                onDeleteCategory={handleDeleteCategory}
+            />
+
+            <main className="flex-1 flex flex-col transition-all duration-300">
+                <header className="flex items-center justify-between p-4 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
+                    <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-2 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700">
+                        {isSidebarOpen ? <ChevronLeft size={20} /> : <ChevronRight size={20} />}
+                    </button>
+                    <h1 className="text-xl font-bold">
+                        {getFilterName(activeFilter, categories)}
+                    </h1>
+                    <button onClick={() => openModal()} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg shadow-md hover:bg-blue-700 transition-colors">
+                        <Plus size={18} />
+                        <span className="hidden sm:inline">新しいメモ</span>
+                    </button>
+                </header>
+
+                <MemoList memos={filteredMemos} onEdit={openModal} onDelete={handleDeleteMemo} />
+            </main>
+
+            {isModalOpen && (
+                <MemoModal
+                    isOpen={isModalOpen}
+                    onClose={closeModal}
+                    onSave={handleSaveMemo}
+                    memo={editingMemo}
+                    categories={categories}
+                />
+            )}
+
+            {isCategoryModalOpen && (
+                <CategoryModal
+                    isOpen={isCategoryModalOpen}
+                    onClose={closeCategoryModal}
+                    onSave={handleSaveCategory}
+                    category={editingCategory}
+                />
+            )}
+        </div>
+    );
+}
+
+// --- Child Components ---
+
+function Sidebar({ isOpen, categories, activeFilter, onFilterChange, onNewCategory, onEditCategory, onDeleteCategory }) {
+    const isActive = (type, id = null) => activeFilter.type === type && activeFilter.id === id;
+    return (
+        <aside className={`flex-shrink-0 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col transition-all duration-300 ${isOpen ? 'w-64' : 'w-0 overflow-hidden'}`}>
+            <div className="p-4"><h2 className="text-2xl font-bold">メモ帳</h2></div>
+            <nav className="flex-1 px-2 py-4 space-y-1">
+                <SidebarItem icon={<Inbox size={20} />} label="すべてのメモ" isActive={isActive('all')} onClick={() => onFilterChange({ type: 'all', id: null })} />
+                <SidebarItem icon={<Star size={20} />} label="重要" isActive={isActive('important')} onClick={() => onFilterChange({ type: 'important', id: null })} />
+                <SidebarItem icon={<Bell size={20} />} label="リマインダー" isActive={isActive('reminders')} onClick={() => onFilterChange({ type: 'reminders', id: null })} />
+                <div className="pt-4 mt-4 border-t border-gray-200 dark:border-gray-700">
+                    <div className="flex justify-between items-center px-2 mb-2">
+                        <h3 className="text-sm font-semibold text-gray-500 uppercase">カテゴリ</h3>
+                        <button onClick={onNewCategory} className="p-1 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700"><Plus size={16} /></button>
+                    </div>
+                    {categories.map(cat => (
+                        <div key={cat.id} className="group flex items-center">
+                            <SidebarItem icon={<Tag size={20} style={{ color: cat.color || '#6B7280' }} />} label={cat.name} isActive={isActive('category', cat.id)} onClick={() => onFilterChange({ type: 'category', id: cat.id })} className="flex-1" />
+                            <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center">
+                                <button onClick={() => onEditCategory(cat)} className="p-1 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700"><Edit size={14} /></button>
+                                <button onClick={() => onDeleteCategory(cat.id)} className="p-1 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700 text-red-500"><Trash2 size={14} /></button>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            </nav>
+        </aside>
+    );
+}
+
+function SidebarItem({ icon, label, isActive, onClick, className = '' }) {
+    return (
+        <button onClick={onClick} className={`w-full flex items-center gap-3 px-3 py-2 rounded-md text-left text-sm font-medium transition-colors ${isActive ? 'bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300' : 'hover:bg-gray-100 dark:hover:bg-gray-700'} ${className}`}>
+            {icon}<span>{label}</span>
+        </button>
+    );
+}
+
+function MemoList({ memos, onEdit, onDelete }) {
+    if (memos.length === 0) {
+        return (
+            <div className="flex-1 flex flex-col items-center justify-center text-center p-8 text-gray-500">
+                <Inbox size={48} className="mb-4" />
+                <h3 className="text-xl font-semibold">メモがありません</h3>
+                <p>右上の「新しいメモ」ボタンから最初のメモを作成しましょう。</p>
+            </div>
+        );
+    }
+    return (
+        <div className="flex-1 p-4 overflow-y-auto grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {memos.map(memo => (<MemoCard key={memo.id} memo={memo} onEdit={onEdit} onDelete={onDelete} />))}
+        </div>
+    );
+}
+
+const priorityStyles = { low: 'border-blue-400', medium: 'border-yellow-400', high: 'border-red-500' };
+
+function MemoCard({ memo, onEdit, onDelete }) {
+    const priorityClass = priorityStyles[memo.priority] || 'border-gray-300 dark:border-gray-600';
+    return (
+        <div className={`bg-white dark:bg-gray-800 rounded-lg shadow-md hover:shadow-xl transition-shadow flex flex-col border-l-4 ${priorityClass}`}>
+            <div className="p-4 flex-1"><h3 className="font-bold text-lg mb-2 truncate">{memo.title}</h3><p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-4 flex-1">{memo.content}</p></div>
+            <div className="p-4 bg-gray-50 dark:bg-gray-800/50 border-t border-gray-200 dark:border-gray-700">
+                <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
+                    <span>{formatDate(memo.updatedAt)}</span>
+                    <div className="flex items-center gap-2">
+                        {memo.reminderAt && <Bell size={14} />}
+                        <div className="flex items-center gap-2">
+                            <button onClick={() => onEdit(memo)} className="p-1 rounded-md hover:bg-gray-200 dark:hover:bg-gray-600"><Edit size={14} /></button>
+                            <button onClick={() => onDelete(memo.id)} className="p-1 rounded-md hover:bg-gray-200 dark:hover:bg-gray-600 text-red-500"><Trash2 size={14} /></button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function MemoModal({ isOpen, onClose, onSave, memo, categories }) {
+    const [title, setTitle] = useState(memo?.title || '');
+    const [content, setContent] = useState(memo?.content || '');
+    const [categoryId, setCategoryId] = useState(memo?.categoryId || '');
+    const [priority, setPriority] = useState(memo?.priority || 'medium');
+    const [reminderAt, setReminderAt] = useState(memo?.reminderAt ? toDatetimeLocal(new Date(memo.reminderAt)) : '');
+    const [isAiLoading, setIsAiLoading] = useState(false);
+
+    const handleSubmit = (e) => {
+        e.preventDefault();
+        onSave({ title, content, categoryId: categoryId || null, priority, reminderAt });
+    };
+
+    const handleAiSummarize = async () => {
+        if (!content) return;
+        setIsAiLoading(true);
+        try {
+            const prompt = `以下の文章を簡潔に、重要なポイントを箇条書きで要約してください。\n\n---\n${content}`;
+            const summary = await callGeminiApi(prompt);
+            setContent(summary);
+        } catch (error) {
+            console.error("AI summary failed:", error);
+        } finally {
+            setIsAiLoading(false);
+        }
+    };
+
+    const handleAiGenerateIdeas = async () => {
+        if (!title) return;
+        setIsAiLoading(true);
+        try {
+            const prompt = `「${title}」というテーマについて、関連するアイデアやタスクを箇条書きでいくつか提案してください。`;
+            const ideas = await callGeminiApi(prompt);
+            setContent(prev => (prev ? prev + '\n\n' : '') + `--- AIによるアイデア ---\n${ideas}`);
+        } catch (error) {
+            console.error("AI idea generation failed:", error);
+        } finally {
+            setIsAiLoading(false);
+        }
+    };
+
+    if (!isOpen) return null;
+
+    return (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-40 flex items-center justify-center p-4">
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+                <header className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
+                    <h2 className="text-lg font-semibold">{memo ? 'メモを編集' : '新しいメモ'}</h2>
+                    <button onClick={onClose} className="p-1 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700"><X size={20} /></button>
+                </header>
+                <form onSubmit={handleSubmit} id="memo-form" className="flex-1 overflow-y-auto p-6 space-y-4">
+                    <input type="text" placeholder="タイトル" value={title} onChange={(e) => setTitle(e.target.value)} required className="w-full p-2 border rounded-md bg-gray-50 dark:bg-gray-700 dark:border-gray-600 focus:ring-2 focus:ring-blue-500 outline-none" />
+                    
+                    <div className="flex items-center gap-2">
+                        <button type="button" onClick={handleAiGenerateIdeas} disabled={isAiLoading || !title} className="flex items-center gap-2 px-3 py-1.5 text-sm bg-purple-100 text-purple-700 rounded-md hover:bg-purple-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+                            <Sparkles size={16} /> {isAiLoading ? '生成中...' : '✨ AIでアイデア出し'}
+                        </button>
+                        <button type="button" onClick={handleAiSummarize} disabled={isAiLoading || !content} className="flex items-center gap-2 px-3 py-1.5 text-sm bg-green-100 text-green-700 rounded-md hover:bg-green-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+                            <Sparkles size={16} /> {isAiLoading ? '要約中...' : '✨ AIで要約'}
+                        </button>
+                    </div>
+
+                    <textarea placeholder="内容" value={content} onChange={(e) => setContent(e.target.value)} rows="10" className="w-full p-2 border rounded-md bg-gray-50 dark:bg-gray-700 dark:border-gray-600 focus:ring-2 focus:ring-blue-500 outline-none"></textarea>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div>
+                            <label className="block text-sm font-medium mb-1">カテゴリ</label>
+                            <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className="w-full p-2 border rounded-md bg-gray-50 dark:bg-gray-700 dark:border-gray-600">
+                                <option value="">未分類</option>
+                                {categories.map(cat => <option key={cat.id} value={cat.id}>{cat.name}</option>)}
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium mb-1">重要度</label>
+                            <div className="flex space-x-2">
+                                {['low', 'medium', 'high'].map(p => (<button type="button" key={p} onClick={() => setPriority(p)} className={`flex-1 p-2 rounded-md text-sm capitalize ${priority === p ? `bg-${priorityStyles[p].split('-')[1]}-500 text-white` : 'bg-gray-200 dark:bg-gray-600'}`}>{p === 'low' ? '低' : p === 'medium' ? '中' : '高'}</button>))}
+                            </div>
+                        </div>
+                         <div>
+                            <label className="block text-sm font-medium mb-1">リマインダー</label>
+                            <input type="datetime-local" value={reminderAt} onChange={(e) => setReminderAt(e.target.value)} className="w-full p-2 border rounded-md bg-gray-50 dark:bg-gray-700 dark:border-gray-600" />
+                        </div>
+                    </div>
+                    <div className="text-xs text-gray-500">作成: {memo?.createdAt ? formatDate(memo.createdAt) : '新規'} | 更新: {memo?.updatedAt ? formatDate(memo.updatedAt) : '新規'}</div>
+                </form>
+                <footer className="p-4 bg-gray-50 dark:bg-gray-800/50 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-2">
+                    <button type="button" onClick={onClose} className="px-4 py-2 rounded-md bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500">キャンセル</button>
+                    <button type="submit" form="memo-form" className="px-4 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700">保存</button>
+                </footer>
+            </div>
+        </div>
+    );
+}
+
+function CategoryModal({ isOpen, onClose, onSave, category }) {
+    const [name, setName] = useState(category?.name || '');
+    const [color, setColor] = useState(category?.color || '#6B7280');
+    const handleSubmit = (e) => { e.preventDefault(); onSave({ name, color }); };
+    if (!isOpen) return null;
+    return (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-2xl w-full max-w-sm">
+                <header className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
+                    <h2 className="text-lg font-semibold">{category ? 'カテゴリを編集' : '新しいカテゴリ'}</h2>
+                    <button onClick={onClose} className="p-1 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700"><X size={20} /></button>
+                </header>
+                <form onSubmit={handleSubmit} id="category-form" className="p-6 space-y-4">
+                    <input type="text" placeholder="カテゴリ名" value={name} onChange={(e) => setName(e.target.value)} required className="w-full p-2 border rounded-md bg-gray-50 dark:bg-gray-700 dark:border-gray-600 focus:ring-2 focus:ring-blue-500 outline-none" />
+                    <div>
+                        <label className="block text-sm font-medium mb-1">色</label>
+                        <input type="color" value={color} onChange={(e) => setColor(e.target.value)} className="w-full h-10 p-1 border rounded-md bg-gray-50 dark:bg-gray-700 dark:border-gray-600" />
+                    </div>
+                </form>
+                <footer className="p-4 bg-gray-50 dark:bg-gray-800/50 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-2">
+                    <button type="button" onClick={onClose} className="px-4 py-2 rounded-md bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500">キャンセル</button>
+                    <button type="submit" form="category-form" className="px-4 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-700">保存</button>
+                </footer>
+            </div>
+        </div>
+    );
+}
+
+function ReminderToast({ reminder, onDismiss }) {
+    return (
+        <div className="max-w-sm w-full bg-white dark:bg-gray-800 shadow-lg rounded-lg pointer-events-auto ring-1 ring-black ring-opacity-5 overflow-hidden">
+            <div className="p-4">
+                <div className="flex items-start">
+                    <div className="flex-shrink-0"><AlertCircle className="h-6 w-6 text-yellow-400" aria-hidden="true" /></div>
+                    <div className="ml-3 w-0 flex-1 pt-0.5">
+                        <p className="text-sm font-medium text-gray-900 dark:text-white">リマインダー</p>
+                        <p className="mt-1 text-sm text-gray-500 dark:text-gray-300 truncate">{reminder.title}</p>
+                        <p className="mt-1 text-xs text-gray-400"><Clock size={12} className="inline mr-1"/>{formatDate(reminder.reminderAt)}</p>
+                    </div>
+                    <div className="ml-4 flex-shrink-0 flex">
+                        <button onClick={() => onDismiss(reminder.id)} className="bg-white dark:bg-gray-800 rounded-md inline-flex text-gray-400 hover:text-gray-500 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                            <span className="sr-only">Close</span><X className="h-5 w-5" aria-hidden="true" />
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// --- Helper Functions ---
+function getFilterName(filter, categories) {
+    switch (filter.type) {
+        case 'all': return 'すべてのメモ';
+        case 'important': return '重要';
+        case 'reminders': return 'リマインダー';
+        case 'category':
+            const cat = categories.find(c => c.id === filter.id);
+            return cat ? cat.name : 'カテゴリ';
+        default: return 'メモ';
+    }
+}
+
+function formatDate(date) {
+    if (!date) return '';
+    if (!(date instanceof Date)) date = new Date(date);
+    if (isNaN(date)) return '';
+    return new Intl.DateTimeFormat('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(date);
+}
+
+function toDatetimeLocal(date) {
+    if (!date) return "";
+    if (!(date instanceof Date)) date = new Date(date);
+    if (isNaN(date)) return '';
+    const ten = (i) => (i < 10 ? '0' : '') + i;
+    const YYYY = date.getFullYear();
+    const MM = ten(date.getMonth() + 1);
+    const DD = ten(date.getDate());
+    const HH = ten(date.getHours());
+    const II = ten(date.getMinutes());
+    return `${YYYY}-${MM}-${DD}T${HH}:${II}`;
+}
