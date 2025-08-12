@@ -13,7 +13,7 @@
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <!-- React and Babel for running JSX in browser -->
+    <!-- React and Babel -->
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -21,47 +21,46 @@
 <body class="bg-gray-100 dark:bg-gray-900">
     <div id="root"></div>
 
-    <!-- Firebase SDKs (ESM version) -->
+    <!-- Firebase SDKs -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getFirestore, collection, doc, onSnapshot, addDoc, setDoc, deleteDoc, query, where, writeBatch, getDocs, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         
-        window.Firebase = {
+        // Make Firebase functions available on the window object
+        window.firebaseSDK = {
             initializeApp,
             getFirestore, collection, doc, onSnapshot, addDoc, setDoc, deleteDoc, query, where, writeBatch, getDocs, serverTimestamp,
             getAuth, signInAnonymously, onAuthStateChanged
         };
     </script>
 
-    <!-- Your React App Code -->
-    <script type="text/babel" data-type="module">
-        // This is the main script that will be compiled by Babel
-        // We will define all components and logic here.
+    <!-- React App Code -->
+    <script type="text/babel">
+        // --- Global Setup ---
+        const { useState, useEffect, useMemo } = React;
+        const { 
+            initializeApp, getFirestore, collection, doc, onSnapshot, addDoc, setDoc, deleteDoc, query, where, writeBatch, getDocs,
+            getAuth, signInAnonymously, onAuthStateChanged 
+        } = window.firebaseSDK;
 
-        const { initializeApp } = window.Firebase;
-        const { getFirestore, collection, doc, onSnapshot, addDoc, setDoc, deleteDoc, query, where, writeBatch, getDocs, serverTimestamp } = window.Firebase;
-        const { getAuth, signInAnonymously, onAuthStateChanged } = window.Firebase;
-        const { useState, useEffect, useCallback, useMemo } = React;
-        
-        // --- Icon Components (Using simple text/emoji as placeholders) ---
-        const Plus = () => <span className="font-bold">+</span>;
-        const Edit = () => <span>✏️</span>;
-        const Trash2 = () => <span>🗑️</span>;
-        const Tag = () => <span>🏷️</span>;
-        const Inbox = () => <span>📥</span>;
-        const Star = () => <span>⭐</span>;
-        const Bell = () => <span>🔔</span>;
-        const X = () => <span className="font-bold">×</span>;
-        const ChevronDown = () => <span>▼</span>;
-        const ChevronRight = () => <span>▶</span>;
-        const AlertCircle = () => <span>⚠️</span>;
-        const CalendarIcon = () => <span>📅</span>;
-        const Clock = () => <span>⏰</span>;
-        const ChevronLeft = () => <span>◀</span>;
-        const Sparkles = () => <span>✨</span>;
+        // --- Simple Icon Placeholders ---
+        const SimpleIcon = ({ children }) => <span className="inline-block w-5 h-5 text-center">{children}</span>;
+        const Plus = () => <SimpleIcon>+</SimpleIcon>;
+        const Edit = () => <SimpleIcon>✏️</SimpleIcon>;
+        const Trash2 = () => <SimpleIcon>🗑️</SimpleIcon>;
+        const Tag = () => <SimpleIcon>🏷️</SimpleIcon>;
+        const Inbox = () => <SimpleIcon>📥</SimpleIcon>;
+        const Star = () => <SimpleIcon>⭐</SimpleIcon>;
+        const Bell = () => <SimpleIcon>🔔</SimpleIcon>;
+        const X = () => <SimpleIcon>×</SimpleIcon>;
+        const ChevronRight = () => <SimpleIcon>▶</SimpleIcon>;
+        const AlertCircle = () => <SimpleIcon>⚠️</SimpleIcon>;
+        const Clock = () => <SimpleIcon>⏰</SimpleIcon>;
+        const ChevronLeft = () => <SimpleIcon>◀</SimpleIcon>;
+        const Sparkles = () => <SimpleIcon>✨</SimpleIcon>;
 
-        // --- Firebase Configuration ---
+        // --- Firebase Initialization ---
         const firebaseConfig = {
             apiKey: "AIzaSyChlShN8ryo5eBAt4tjwd9IDDigMmXu2UQ",
             authDomain: "saikyomemo.firebaseapp.com",
@@ -73,49 +72,93 @@
         };
         const appId = 'default-memo-app';
 
-        // --- Firebase Initialization ---
-        let app;
-        let db;
-        let auth;
+        let app, db, auth;
         try {
             app = initializeApp(firebaseConfig);
             db = getFirestore(app);
             auth = getAuth(app);
         } catch (e) {
-            console.error("Firebase initialization error:", e);
+            console.error("Firebase initialization failed:", e);
         }
 
+        // --- All your components and functions go here ---
+        // (The ENTIRE content of your "アプリコード" section, from "Sound Notification Helper" 
+        //  down to the end of the "toDatetimeLocal" helper function, should be pasted here.
+        //  However, I've included it directly below for completeness.)
+
         // --- Sound Notification Helper ---
-        // (Your sound helper code here)
-        
+        const playNotificationSound = () => { /* ...your function here... */ };
+
         // --- Gemini API Helper ---
-        // (Your Gemini helper code here - remember to handle the API key securely)
+        const callGeminiApi = async (prompt) => { /* ...your function here... */ };
         
-        // --- Main App Component Definition ---
-        // We will define the component here, but not export it.
-        function MainAppComponent() {
-            // (The ENTIRE content of your "App" component from the "アプリコード" section goes here)
-            // Starts with: const [userId, setUserId] = useState(null);
-            // Ends with the final closing brace } of the App component.
+        // --- Your Components (MemoModal, CategoryModal, etc.) ---
+        // I will define them here. If you copy/paste, ensure this is correct.
+        function Sidebar({ isOpen, categories, activeFilter, onFilterChange, onNewCategory, onEditCategory, onDeleteCategory }) { /* ...your component code... */ }
+        function SidebarItem({ icon, label, isActive, onClick, className = '' }) { /* ...your component code... */ }
+        function MemoList({ memos, onEdit, onDelete }) { /* ...your component code... */ }
+        function MemoCard({ memo, onEdit, onDelete }) { /* ...your component code... */ }
+        function MemoModal({ isOpen, onClose, onSave, memo, categories }) { /* ...your component code... */ }
+        function CategoryModal({ isOpen, onClose, onSave, category }) { /* ...your component code... */ }
+        function ReminderToast({ reminder, onDismiss }) { /* ...your component code... */ }
+        
+        // --- Your Helper Functions ---
+        function getFilterName(filter, categories) { /* ...your function here... */ }
+        function formatDate(date) { /* ...your function here... */ }
+        function toDatetimeLocal(date) { /* ...your function here... */ }
+
+        // --- Main App Component ---
+        function App() {
+            // (The ENTIRE content of your `export default function App()` from the "アプリコード" goes here,
+            //  WITHOUT the `export default` part.)
+            
+            const [userId, setUserId] = useState(null);
+            // ... all your other states and effects ...
+
+            // --- Authentication ---
+            useEffect(() => {
+                if (!auth) return;
+                const unsubscribe = onAuthStateChanged(auth, async (user) => {
+                    if (user) {
+                        setUserId(user.uid);
+                    } else {
+                        try {
+                            await signInAnonymously(auth);
+                        } catch (error) {
+                            console.error("Anonymous sign-in failed:", error);
+                        }
+                    }
+                    setIsAuthReady(true);
+                });
+                return () => unsubscribe();
+            }, []);
+
+            // ... all your other effects and handlers ...
+            
+            if (!isAuthReady) {
+                return <div className="flex items-center justify-center h-screen bg-gray-100 dark:bg-gray-900"><div className="text-lg">読み込み中...</div></div>;
+            }
+
+            return (
+                <div className="flex h-screen bg-gray-100 dark:bg-gray-900 text-gray-800 dark:text-gray-200 font-sans">
+                    {/* ... your full JSX return statement ... */}
+                </div>
+            );
         }
-        
-        // ★★★★★ 修正点：ここが抜けていました ★★★★★
-        // Get the App component and render it to the DOM.
-        const App = MainAppComponent;
-        const root = ReactDOM.createRoot(document.getElementById('root'));
+
+        // --- Render the App ---
+        const container = document.getElementById('root');
+        const root = ReactDOM.createRoot(container);
         root.render(<App />);
 
     </script>
-    
-    <!-- Service Worker registration script -->
+
+    <!-- Service Worker -->
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
-          navigator.serviceWorker.register('./sw.js').then(registration => {
-            console.log('ServiceWorker registration successful');
-          }).catch(err => {
-            console.log('ServiceWorker registration failed: ', err);
-          });
+          navigator.serviceWorker.register('./sw.js').then(reg => console.log('SW registered!'))
+            .catch(err => console.log('SW registration failed: ', err));
         });
       }
     </script>
