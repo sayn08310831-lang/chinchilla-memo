@@ -27,8 +27,7 @@
         import { getFirestore, collection, doc, onSnapshot, addDoc, setDoc, deleteDoc, query, where, writeBatch, getDocs, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         
-        // Make Firebase functions available on the window object
-        window.firebaseSDK = {
+        window.Firebase = {
             initializeApp,
             getFirestore, collection, doc, onSnapshot, addDoc, setDoc, deleteDoc, query, where, writeBatch, getDocs, serverTimestamp,
             getAuth, signInAnonymously, onAuthStateChanged
@@ -37,23 +36,22 @@
 
     <!-- React App Code -->
     <script type="text/babel">
-        // --- Global Setup ---
         const { useState, useEffect, useMemo } = React;
         const { 
             initializeApp, getFirestore, collection, doc, onSnapshot, addDoc, setDoc, deleteDoc, query, where, writeBatch, getDocs,
             getAuth, signInAnonymously, onAuthStateChanged 
-        } = window.firebaseSDK;
+        } = window.Firebase;
 
-        // --- Simple Icon Placeholders ---
-        const SimpleIcon = ({ children }) => <span className="inline-block w-5 h-5 text-center">{children}</span>;
-        const Plus = () => <SimpleIcon>+</SimpleIcon>;
+        // --- Icon Placeholders ---
+        const SimpleIcon = ({ children, className }) => <span className={`inline-block w-5 h-5 text-center leading-5 ${className}`}>{children}</span>;
+        const Plus = () => <SimpleIcon className="font-bold">+</SimpleIcon>;
         const Edit = () => <SimpleIcon>✏️</SimpleIcon>;
         const Trash2 = () => <SimpleIcon>🗑️</SimpleIcon>;
-        const Tag = () => <SimpleIcon>🏷️</SimpleIcon>;
+        const Tag = (props) => <span {...props} className="inline-block w-5 h-5 text-center leading-5">🏷️</span>;
         const Inbox = () => <SimpleIcon>📥</SimpleIcon>;
         const Star = () => <SimpleIcon>⭐</SimpleIcon>;
         const Bell = () => <SimpleIcon>🔔</SimpleIcon>;
-        const X = () => <SimpleIcon>×</SimpleIcon>;
+        const X = () => <SimpleIcon className="font-bold">×</SimpleIcon>;
         const ChevronRight = () => <SimpleIcon>▶</SimpleIcon>;
         const AlertCircle = () => <SimpleIcon>⚠️</SimpleIcon>;
         const Clock = () => <SimpleIcon>⏰</SimpleIcon>;
@@ -81,84 +79,126 @@
             console.error("Firebase initialization failed:", e);
         }
 
-        // --- All your components and functions go here ---
-        // (The ENTIRE content of your "アプリコード" section, from "Sound Notification Helper" 
-        //  down to the end of the "toDatetimeLocal" helper function, should be pasted here.
-        //  However, I've included it directly below for completeness.)
-
         // --- Sound Notification Helper ---
-        const playNotificationSound = () => { /* ...your function here... */ };
+        const playNotificationSound = () => { /* ... (omitted for brevity, your code is fine) ... */ };
 
         // --- Gemini API Helper ---
-        const callGeminiApi = async (prompt) => { /* ...your function here... */ };
+        const callGeminiApi = async (prompt) => {
+             console.warn("Gemini API is not configured. Returning a placeholder.");
+             return "AI機能は現在準備中です。";
+        };
         
-        // --- Your Components (MemoModal, CategoryModal, etc.) ---
-        // I will define them here. If you copy/paste, ensure this is correct.
-        function Sidebar({ isOpen, categories, activeFilter, onFilterChange, onNewCategory, onEditCategory, onDeleteCategory }) { /* ...your component code... */ }
-        function SidebarItem({ icon, label, isActive, onClick, className = '' }) { /* ...your component code... */ }
-        function MemoList({ memos, onEdit, onDelete }) { /* ...your component code... */ }
-        function MemoCard({ memo, onEdit, onDelete }) { /* ...your component code... */ }
-        function MemoModal({ isOpen, onClose, onSave, memo, categories }) { /* ...your component code... */ }
-        function CategoryModal({ isOpen, onClose, onSave, category }) { /* ...your component code... */ }
-        function ReminderToast({ reminder, onDismiss }) { /* ...your component code... */ }
-        
-        // --- Your Helper Functions ---
-        function getFilterName(filter, categories) { /* ...your function here... */ }
-        function formatDate(date) { /* ...your function here... */ }
-        function toDatetimeLocal(date) { /* ...your function here... */ }
+        // --- Helper Functions ---
+        const formatVisitTime = (startTimestamp, endTimestamp) => { /* ... (your function here) ... */ };
+        const generateGoogleCalendarLink = (app) => { /* ... (your function here) ... */ };
+        const getDateColorClass = (date) => { /* ... (your function here) ... */ };
+        function getFilterName(filter, categories) { /* ... (your function here) ... */ }
+        function formatDate(date) { /* ... (your function here) ... */ }
+        function toDatetimeLocal(date) { /* ... (your function here) ... */ }
+
+
+        // --- Components ---
+        function ConfirmationModal({ isOpen, message, onConfirm, onCancel }) { /* ... (your component code) ... */ }
+        function TeamIdEntry({ onTeamIdSubmit }) { /* ... (your component code) ... */ }
+        function AppointmentCard({ app, onEdit, onDelete, onViewDetails, isDetailPage, isPast }) { /* ... (your component code) ... */ }
+        function DetailPage({ salesPerson, appointments, onBack, onEdit, onDelete, onViewPast }) { /* ... (your component code) ... */ }
+        function PastAppointmentsPage({ appointments, onBack, onEdit, onDelete, title, filterPerson }) { /* ... (your component code) ... */ }
+        function Sidebar({ isOpen, categories, activeFilter, onFilterChange, onNewCategory, onEditCategory, onDeleteCategory }) { /* ... (your component code) ... */ }
+        function SidebarItem({ icon, label, isActive, onClick, className = '' }) { /* ... (your component code) ... */ }
+        function MemoList({ memos, onEdit, onDelete }) { /* ... (your component code) ... */ }
+        function MemoCard({ memo, onEdit, onDelete }) { /* ... (your component code) ... */ }
+        function MemoModal({ isOpen, onClose, onSave, memo, categories }) { /* ... (your component code) ... */ }
+        function CategoryModal({ isOpen, onClose, onSave, category }) { /* ... (your component code) ... */ }
+        function ReminderToast({ reminder, onDismiss }) { /* ... (your component code) ... */ }
 
         // --- Main App Component ---
         function App() {
-            // (The ENTIRE content of your `export default function App()` from the "アプリコード" goes here,
-            //  WITHOUT the `export default` part.)
-            
             const [userId, setUserId] = useState(null);
-            // ... all your other states and effects ...
+            const [isAuthReady, setIsAuthReady] = useState(false);
+            const [memos, setMemos] = useState([]);
+            const [categories, setCategories] = useState([]);
+            const [activeFilter, setActiveFilter] = useState({ type: 'all', id: null });
+            const [isModalOpen, setIsModalOpen] = useState(false);
+            const [editingMemo, setEditingMemo] = useState(null);
+            const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
+            const [editingCategory, setEditingCategory] = useState(null);
+            const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+            const [reminders, setReminders] = useState([]);
 
-            // --- Authentication ---
+            // --- Auth Effect ---
             useEffect(() => {
-                if (!auth) return;
+                if (!auth) { setIsAuthReady(true); return; }
                 const unsubscribe = onAuthStateChanged(auth, async (user) => {
                     if (user) {
                         setUserId(user.uid);
                     } else {
-                        try {
-                            await signInAnonymously(auth);
-                        } catch (error) {
-                            console.error("Anonymous sign-in failed:", error);
-                        }
+                        try { await signInAnonymously(auth); } catch (error) { console.error("Anonymous sign-in failed:", error); }
                     }
                     setIsAuthReady(true);
                 });
                 return () => unsubscribe();
             }, []);
 
-            // ... all your other effects and handlers ...
+            // --- Data Fetching Effects ---
+            useEffect(() => {
+                if (!isAuthReady || !userId || !db) return;
+                const categoriesCollection = collection(db, `artifacts/${appId}/users/${userId}/categories`);
+                const unsubscribeCategories = onSnapshot(categoriesCollection, (snapshot) => {
+                    setCategories(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+                });
+                const memosCollection = collection(db, `artifacts/${appId}/users/${userId}/memos`);
+                const unsubscribeMemos = onSnapshot(memosCollection, (snapshot) => {
+                    setMemos(snapshot.docs.map(doc => ({
+                        id: doc.id, ...doc.data(),
+                        createdAt: doc.data().createdAt?.toDate(),
+                        updatedAt: doc.data().updatedAt?.toDate(),
+                        reminderAt: doc.data().reminderAt?.toDate(),
+                    })));
+                });
+                return () => { unsubscribeCategories(); unsubscribeMemos(); };
+            }, [isAuthReady, userId]);
             
+            // --- Reminder Check Effect ---
+            useEffect(() => { /* ... (your effect code) ... */ }, [memos, userId]);
+
+            // --- Memo Filtering ---
+            const filteredMemos = useMemo(() => { /* ... (your memo logic) ... */ }, [memos, activeFilter]);
+            
+            // --- Handlers ---
+            const handleSaveMemo = async (memoData) => { /* ... (your handler code) ... */ };
+            const handleDeleteMemo = async (memoId) => { /* ... (your handler code) ... */ };
+            const handleSaveCategory = async (categoryData) => { /* ... (your handler code) ... */ };
+            const handleDeleteCategory = async (categoryId) => { /* ... (your handler code) ... */ };
+            const openModal = (memo = null) => { setEditingMemo(memo); setIsModalOpen(true); };
+            const closeModal = () => setIsModalOpen(false);
+            const openCategoryModal = (category = null) => { setEditingCategory(category); setIsCategoryModalOpen(true); };
+            const closeCategoryModal = () => setIsCategoryModalOpen(false);
+            const dismissReminder = (reminderId) => { setReminders(reminders.filter(r => r.id !== reminderId)); };
+
             if (!isAuthReady) {
                 return <div className="flex items-center justify-center h-screen bg-gray-100 dark:bg-gray-900"><div className="text-lg">読み込み中...</div></div>;
             }
 
             return (
                 <div className="flex h-screen bg-gray-100 dark:bg-gray-900 text-gray-800 dark:text-gray-200 font-sans">
-                    {/* ... your full JSX return statement ... */}
+                    {/* ... (The full JSX from your App component's return statement) ... */}
                 </div>
             );
         }
 
-        // --- Render the App ---
+        // --- Final Render Call ---
         const container = document.getElementById('root');
         const root = ReactDOM.createRoot(container);
         root.render(<App />);
-
     </script>
-
+    
     <!-- Service Worker -->
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
-          navigator.serviceWorker.register('./sw.js').then(reg => console.log('SW registered!'))
-            .catch(err => console.log('SW registration failed: ', err));
+          navigator.serviceWorker.register('./sw.js')
+            .then(reg => console.log('Service Worker: Registered'))
+            .catch(err => console.error('Service Worker: Registration Failed', err));
         });
       }
     </script>
